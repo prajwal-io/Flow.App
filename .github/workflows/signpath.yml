@@ -1,0 +1,153 @@
+# SignPath code signing for Flow's Windows build (free for open source).
+# Opt-in: this only runs when started manually from the Actions tab, and only
+# succeeds once SignPath is configured (see docs/signing.md).
+name: Sign Windows build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: 'Release tag whose assets get replaced with the signed build (empty = keep as artifact only)'
+        required: false
+        default: ''
+
+permissions:
+  actions: read # read the artifacts the signing request refers to
+  contents: write # replace release assets when release-tag is given
+
+env:
+  # >>> Set these to your SignPath values (docs/signing.md) <<<
+  SIGNPATH_ORGANIZATION_ID: '00000000-0000-0000-0000-000000000000'
+  SIGNPATH_PROJECT_SLUG: 'flow'
+  SIGNPATH_SIGNING_POLICY_SLUG: 'release-signing'
+
+jobs:
+  sign-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Package (unsigned, unpacked)
+        run: npx electron-builder --dir --publish never
+
+      - name: Upload unsigned app
+        id: upload-unpacked
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-win-unpacked
+          path: dist/win-unpacked
+          if-no-files-found: error
+          retention-days: 7
+
+      # Signs Flow.exe inside the unpacked app (artifact config: app-exe).
+      # On the free OSS tier each request needs manual approval in the
+      # SignPath dashboard - the job waits up to 30 minutes for it.
+      - name: Sign Flow.exe
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: app-exe
+          github-artifact-id: ${{ steps.upload-unpacked.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: dist/signed-unpacked
+
+      - name: Swap in the signed Flow.exe
+        run: Copy-Item dist/signed-unpacked/Flow.exe dist/win-unpacked/Flow.exe -Force
+
+      - name: Build installer from the signed app
+        run: npx electron-builder --win --prepackaged dist/win-unpacked --publish never
+
+      - name: Stage installer for signing
+        run: |
+          New-Item -ItemType Directory -Path stage -Force | Out-Null
+          Copy-Item dist/Flow-Setup-*.exe stage/
+
+      - name: Upload unsigned installer
+        id: upload-installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-installer
+          path: stage
+          if-no-files-found: error
+          retention-days: 7
+
+      # Signs the NSIS installer (artifact config: nsis-installer).
+      - name: Sign installer
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: nsis-installer
+          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: dist/signed-installer
+
+      - name: Verify signature, checksum, repoint latest.yml
+        shell: pwsh
+        run: |
+          Copy-Item dist/signed-installer/Flow-Setup-*.exe dist/ -Force
+          $exe = Get-Item dist/Flow-Setup-*.exe | Select-Object -First 1
+
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          Write-Output "signature: $($sig.Status) - $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "installer signature is not valid: $($sig.Status)" }
+
+          # electron-updater verifies every download against latest.yml, which
+          # still describes the unsigned build - repoint it at the signed file.
+          $sha512 = [Convert]::ToBase64String(
+            [Security.Cryptography.SHA512]::Create().ComputeHash(
+              [IO.File]::ReadAllBytes($exe.FullName)))
+          $yml = Get-Content dist/latest.yml -Raw
+          $yml = $yml -replace '(?m)^(\s*sha512: ).*$', "`$1$sha512"
+          $yml = $yml -replace '(?m)^(\s*size: ).*$', "`$1$($exe.Length)"
+          Set-Content dist/latest.yml $yml -NoNewline
+          Get-Content dist/latest.yml
+
+          # Plain checksum line for the release page and curious humans.
+          $sha256 = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          Set-Content dist/SHA256SUMS.txt "$sha256  $($exe.Name)"
+
+      - name: Upload signed installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: signed-installer
+          path: |
+            dist/Flow-Setup-*.exe
+            dist/latest.yml
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Replace release assets
+        if: ${{ inputs.release-tag != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ inputs.release-tag }}"
+          $exe = Get-Item dist/Flow-Setup-*.exe | Select-Object -First 1
+          # The stored blockmap describes the unsigned build; delete it so
+          # electron-updater skips differential and does a full verified download.
+          gh release delete-asset $tag "$($exe.Name).blockmap" -y 2>$null
+          gh release upload $tag $exe.FullName dist/latest.yml dist/SHA256SUMS.txt --clobber
