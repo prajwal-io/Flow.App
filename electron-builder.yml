@@ -35,3 +35,10 @@ linux:
     - AppImage
   icon: build/icon.png
   category: Utility
+
+# electron-updater reads this (as app-update.yml inside the package) to find
+# new releases on GitHub.
+publish:
+  provider: github
+  owner: prajwal-io
+  repo: Flow.App

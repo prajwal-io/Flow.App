@@ -9,6 +9,7 @@ import { presenceLine } from '../shared/presence'
 import { Store, cryptoRandomId, normalizeState } from './state'
 import { TimerEngine } from './timer'
 import { enableBlocking, releaseBlocklist, syncBlocklist } from './blocking'
+import { startUpdater } from './updater'
 import {
   createFlowWindow,
   getFlowWindow,
@@ -458,6 +459,9 @@ if (!app.requestSingleInstanceLock()) {
     createFlowWindow(windowDeps, path.join(__dirname, '../../resources/app-icon.png'))
     // Restore the persisted pin preference onto the new window.
     if (store.get().settings.alwaysOnTop) setAlwaysOnTop(true)
+
+    // Packaged builds only: silent background check against GitHub Releases.
+    startUpdater(notify)
 
     createTray({
       iconPath: path.join(app.getAppPath(), 'resources', 'tray.png'),
