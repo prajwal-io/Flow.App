@@ -16,6 +16,12 @@ const api: FlowApi = {
     return () => ipcRenderer.removeListener('flow:phase-end', listener)
   },
 
+  onPresenceCopied: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('flow:presence-copied', listener)
+    return () => ipcRenderer.removeListener('flow:presence-copied', listener)
+  },
+
   command: (cmd: Command) => ipcRenderer.send('flow:command', cmd),
 
   platform: process.platform,

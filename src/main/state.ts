@@ -1,7 +1,9 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { BreakKind, DayKey, PersistedState, Settings, Task, TimerState } from '../shared/types'
+import type { AmbienceKind, BreakKind, ChimeKind, DayKey, PersistedState, Settings, Task, TimerState } from '../shared/types'
+import { AMBIENCE_KINDS, CHIME_KINDS } from '../shared/types'
+import { parseSites } from '../shared/blocking'
 
 export const DEFAULT_SETTINGS: Settings = {
   flows: 4,
@@ -12,7 +14,11 @@ export const DEFAULT_SETTINGS: Settings = {
   autoStartBreaks: true,
   autoStartFocus: true,
   pauseWhenIdle: true,
+  blockDuringFocus: false,
+  blockedSites: [],
   soundEnabled: true,
+  chime: 'bell',
+  ambience: 'off',
   alwaysOnTop: false,
   launchAtLogin: false,
   pauseOnLock: false,
@@ -39,6 +45,7 @@ export function defaultState(): PersistedState {
     tasks: [],
     timer: { ...DEFAULT_TIMER },
     history: {},
+    lastRepairAt: null,
     windowPosition: null,
   }
 }
@@ -62,7 +69,13 @@ export function normalizeState(raw: unknown): PersistedState {
     autoStartBreaks: typeof s.autoStartBreaks === 'boolean' ? s.autoStartBreaks : base.settings.autoStartBreaks,
     autoStartFocus: typeof s.autoStartFocus === 'boolean' ? s.autoStartFocus : base.settings.autoStartFocus,
     pauseWhenIdle: typeof s.pauseWhenIdle === 'boolean' ? s.pauseWhenIdle : base.settings.pauseWhenIdle,
+    blockDuringFocus: typeof s.blockDuringFocus === 'boolean' ? s.blockDuringFocus : base.settings.blockDuringFocus,
+    blockedSites: Array.isArray(s.blockedSites) ? parseSites(s.blockedSites) : [],
     soundEnabled: typeof s.soundEnabled === 'boolean' ? s.soundEnabled : base.settings.soundEnabled,
+    chime: (CHIME_KINDS as string[]).includes(String(s.chime)) ? (s.chime as ChimeKind) : base.settings.chime,
+    ambience: (AMBIENCE_KINDS as string[]).includes(String(s.ambience))
+      ? (s.ambience as AmbienceKind)
+      : base.settings.ambience,
     alwaysOnTop: typeof s.alwaysOnTop === 'boolean' ? s.alwaysOnTop : base.settings.alwaysOnTop,
     launchAtLogin: typeof s.launchAtLogin === 'boolean' ? s.launchAtLogin : base.settings.launchAtLogin,
     pauseOnLock: typeof s.pauseOnLock === 'boolean' ? s.pauseOnLock : base.settings.pauseOnLock,
@@ -138,15 +151,31 @@ export function normalizeState(raw: unknown): PersistedState {
   if (typeof input.history === 'object' && input.history !== null) {
     for (const [key, value] of Object.entries(input.history)) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(key) && typeof value === 'object' && value !== null) {
-        const v = value as { focusMs?: unknown; flows?: unknown; plannedMs?: unknown }
+        const v = value as {
+          focusMs?: unknown
+          flows?: unknown
+          plannedMs?: unknown
+          longestFlowMs?: unknown
+          blockedMs?: unknown
+          repaired?: unknown
+        }
         history[key as DayKey] = {
           focusMs: clamp(v.focusMs, 0, 24 * 60 * 60 * 1000, 0),
           flows: clamp(v.flows, 0, 99, 0),
           plannedMs: clamp(v.plannedMs, 0, 24 * 60 * 60 * 1000, 0),
+          longestFlowMs: clamp(v.longestFlowMs, 0, 24 * 60 * 60 * 1000, 0),
+          blockedMs: clamp(v.blockedMs, 0, 24 * 60 * 60 * 1000, 0),
+          repaired: v.repaired === true,
         }
       }
     }
   }
+
+  // Backups from before 1.3 simply have no repair clock; that reads as "unused".
+  const lastRepairAt: PersistedState['lastRepairAt'] =
+    typeof input.lastRepairAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.lastRepairAt)
+      ? input.lastRepairAt
+      : null
 
   let windowPosition: PersistedState['windowPosition'] = null
   if (typeof input.windowPosition === 'object' && input.windowPosition !== null) {
@@ -157,7 +186,7 @@ export function normalizeState(raw: unknown): PersistedState {
   }
 
   const version: PersistedState['version'] = 1
-  return { version, settings, tasks, timer, history, windowPosition }
+  return { version, settings, tasks, timer, history, lastRepairAt, windowPosition }
 }
 
 export function cryptoRandomId(): string {

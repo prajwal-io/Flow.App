@@ -45,6 +45,8 @@ async function cleanup(): Promise<void> {
       autoStartFocus,
       pauseWhenIdle,
       soundEnabled,
+      chime,
+      ambience,
       launchAtLogin,
       pauseOnLock,
       globalShortcutEnabled,
@@ -62,6 +64,8 @@ async function cleanup(): Promise<void> {
         autoStartFocus,
         pauseWhenIdle,
         soundEnabled,
+        chime,
+        ambience,
         launchAtLogin,
         pauseOnLock,
         globalShortcutEnabled,
@@ -222,6 +226,25 @@ async function runCaptureScenario(name: string): Promise<void> {
       break
     }
 
+    // Functional smoke (needs FLOW_HOSTS_PATH): the block region must appear
+    // while focus runs, and vanish again when cleanup resets the timer.
+    case 'block-smoke': {
+      api.command({ type: 'start' })
+      await wait(5000)
+      break
+    }
+
+    // Smoke test: synthesized rain must play during a running focus without errors.
+    case 'compact-ambience': {
+      setTheme('light')
+      api.command({ type: 'update-settings', patch: { ambience: 'rain' } })
+      await wait(150)
+      api.command({ type: 'start' })
+      await wait(900)
+      await api.capture('compact-ambience')
+      break
+    }
+
     case 'expanded-settings': {
       setTheme('light')
       await addDemoTasks()
@@ -230,6 +253,41 @@ async function runCaptureScenario(name: string): Promise<void> {
       document.querySelector<HTMLButtonElement>('button[aria-label="Settings"]')?.click()
       await wait(350)
       await api.capture('expanded-settings')
+      break
+    }
+
+    case 'expanded-report': {
+      setTheme('light')
+      api.command({ type: 'set-expanded', expanded: true })
+      await wait(750)
+      document.querySelector<HTMLButtonElement>('button[aria-label="Weekly report"]')?.click()
+      await wait(450)
+      await api.capture('expanded-report')
+      break
+    }
+
+    // Needs a profile whose streak broke yesterday, so the heal is offered.
+    case 'expanded-heal': {
+      setTheme('light')
+      api.command({ type: 'set-expanded', expanded: true })
+      await wait(750)
+      await api.capture('expanded-heal')
+      document.querySelector<HTMLButtonElement>('.heal-btn')?.click()
+      await wait(900) // let the streak pulse settle before the evidence shot
+      await api.capture('expanded-healed')
+      break
+    }
+
+    // The presence row's transient acknowledgment: Copy → Copied.
+    case 'presence-copied': {
+      setTheme('light')
+      api.command({ type: 'set-expanded', expanded: true })
+      await wait(750)
+      document.querySelector<HTMLButtonElement>('button[aria-label="Settings"]')?.click()
+      await wait(350)
+      document.querySelector<HTMLButtonElement>('button[aria-label="Copy focus status"]')?.click()
+      await wait(250)
+      await api.capture('presence-copied')
       break
     }
 

@@ -5,6 +5,13 @@ export type WindowMode = 'compact' | 'expanded'
 export type BreakKind = 'short' | 'long'
 /** Why a paused timer stopped: the user, or time away from the machine. */
 export type PauseReason = 'user' | 'away'
+/** Timbre of the phase-end chime. */
+export type ChimeKind = 'bell' | 'wood' | 'glass' | 'pad'
+/** Locally synthesized focus ambience; `off` plays nothing. */
+export type AmbienceKind = 'off' | 'rain' | 'brown' | 'cafe'
+
+export const CHIME_KINDS: ChimeKind[] = ['bell', 'wood', 'glass', 'pad']
+export const AMBIENCE_KINDS: AmbienceKind[] = ['off', 'rain', 'brown', 'cafe']
 
 export interface Settings {
   /** Number of focus sessions ("flows") in one plan. 1–12. */
@@ -23,8 +30,16 @@ export interface Settings {
   autoStartFocus: boolean
   /** Pause a running focus after a stretch of system-wide inactivity. */
   pauseWhenIdle: boolean
+  /** Keep blocked sites unreachable while a focus is actually running (Windows). */
+  blockDuringFocus: boolean
+  /** Hostnames unreachable during a running focus. */
+  blockedSites: string[]
   /** Play the soft chime when a phase ends. */
   soundEnabled: boolean
+  /** Which chime timbre plays at a phase end. */
+  chime: ChimeKind
+  /** Focus-room ambience, synthesized locally; only during running focus. */
+  ambience: AmbienceKind
   /** Keep the mini-player above other windows. */
   alwaysOnTop: boolean
   /** Start Flow hidden in the tray when the user signs in. */
@@ -88,6 +103,12 @@ export interface DayStat {
   flows: number
   /** Focus time planned by sessions completed this day. */
   plannedMs: number
+  /** Longest single focus phase credited to this day (0 when none recorded). */
+  longestFlowMs: number
+  /** Focus time logged while site blocking was active (0 when never used). */
+  blockedMs: number
+  /** True when the day was healed by a streak repair; focus time stays 0. */
+  repaired: boolean
 }
 
 export interface PersistedState {
@@ -96,6 +117,8 @@ export interface PersistedState {
   tasks: Task[]
   timer: TimerState
   history: Record<DayKey, DayStat>
+  /** Day of the most recent streak repair; null until one is used. */
+  lastRepairAt: DayKey | null
   /** Last user-placed window position; null until the window is moved. */
   windowPosition: WindowPosition | null
 }
@@ -105,6 +128,8 @@ export interface AppState {
   tasks: Task[]
   timer: TimerState
   history: Record<DayKey, DayStat>
+  /** Day of the most recent streak repair; null until one is used. */
+  lastRepairAt: DayKey | null
   /** First unfinished task relevant to the current flow, if any. */
   activeTaskId: string | null
   windowMode: WindowMode
@@ -129,6 +154,9 @@ export type Command =
   | { type: 'update-settings'; patch: SettingsPatch }
   | { type: 'set-always-on-top'; on: boolean }
   | { type: 'set-expanded'; expanded: boolean }
+  | { type: 'repair-day'; key: DayKey }
+  /** Copies the one-line presence status to the clipboard; main confirms via event. */
+  | { type: 'copy-presence' }
   | { type: 'export-data' }
   | { type: 'import-data' }
   | { type: 'hide-window' }
@@ -140,6 +168,8 @@ export interface FlowApi {
   getState(): Promise<AppState>
   onState(cb: (state: AppState) => void): () => void
   onPhaseEnd(cb: (kind: PhaseEndKind) => void): () => void
+  /** Fires after main has copied the presence line to the clipboard. */
+  onPresenceCopied(cb: () => void): () => void
   command(cmd: Command): void
   platform: string
   /** Dev-only screenshot bridge; resolves null in packaged builds. */

@@ -1,6 +1,9 @@
-import type { Settings, SettingsPatch } from '../../../shared/types'
+import { useEffect, useState } from 'react'
+import type { ChimeKind, Settings, SettingsPatch } from '../../../shared/types'
+import { AMBIENCE_KINDS, CHIME_KINDS } from '../../../shared/types'
 import { IDLE_PAUSE_SECONDS } from '../../../shared/constants'
 import { api } from '../lib/api'
+import { playChime } from '../lib/sound'
 import { Switch } from './Switch'
 
 interface BehaviorSectionProps {
@@ -12,8 +15,34 @@ interface BehaviorSectionProps {
 const SHORTCUT_KEYS = api.platform === 'darwin' ? ['⌘', '⌥', 'Space'] : ['Ctrl', 'Alt', 'Space']
 const IDLE_MINUTES = Math.round(IDLE_PAUSE_SECONDS / 60)
 
+const CHIME_LABELS: Record<ChimeKind, string> = {
+  bell: 'Bell',
+  wood: 'Wood',
+  glass: 'Glass',
+  pad: 'Pad',
+}
+
+const AMBIENCE_LABELS: Record<(typeof AMBIENCE_KINDS)[number], string> = {
+  off: 'Off',
+  rain: 'Rain',
+  brown: 'Brown noise',
+  cafe: 'Café',
+}
+
 /** The behaviour half of the expanded panel: focus cadence and app integration. */
 export function BehaviorSection({ settings, shortcutActive, onChange }: BehaviorSectionProps) {
+  // "Copied" acknowledgment for the presence row; settles back on its own.
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    const off = api.onPresenceCopied(() => setCopied(true))
+    return off
+  }, [])
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 1800)
+    return () => clearTimeout(timer)
+  }, [copied])
+
   return (
     <>
       <section className="section behavior">
@@ -47,6 +76,47 @@ export function BehaviorSection({ settings, shortcutActive, onChange }: Behavior
             onChange={() => onChange({ pauseWhenIdle: !settings.pauseWhenIdle })}
             label={`Pause when away for ${IDLE_MINUTES} minutes; that time is not counted as focus`}
           />
+        </div>
+
+        <div className="row">
+          <span className="row-label" title="The quiet sound at each phase end">
+            Chime
+          </span>
+          <select
+            className="inline-select"
+            value={settings.chime}
+            aria-label="Chime"
+            onChange={(e) => {
+              const chime = e.target.value as ChimeKind
+              onChange({ chime })
+              if (settings.soundEnabled) playChime('focus', chime)
+            }}
+          >
+            {CHIME_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {CHIME_LABELS[kind]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="row row--wide">
+          <span className="row-copy">
+            <span className="row-label">Ambience</span>
+            <span className="row-hint">Plays only during running focus</span>
+          </span>
+          <select
+            className="inline-select"
+            value={settings.ambience}
+            aria-label="Ambience"
+            onChange={(e) => onChange({ ambience: e.target.value as (typeof AMBIENCE_KINDS)[number] })}
+          >
+            {AMBIENCE_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {AMBIENCE_LABELS[kind]}
+              </option>
+            ))}
+          </select>
         </div>
       </section>
 
@@ -95,6 +165,22 @@ export function BehaviorSection({ settings, shortcutActive, onChange }: Behavior
             onChange={() => onChange({ pauseOnLock: !settings.pauseOnLock })}
             label="Pause when locked or asleep"
           />
+        </div>
+
+        <div className="row row--wide">
+          <span className="row-copy">
+            <span className="row-label">Share focus status</span>
+            <span className="row-hint">One honest line for chat · “Focusing until 4:32 PM · Flow 2 of 4”</span>
+          </span>
+          <button
+            type="button"
+            className="text-btn"
+            aria-label="Copy focus status"
+            title="Copy a one-line status to the clipboard"
+            onClick={() => api.command({ type: 'copy-presence' })}
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
         </div>
       </section>
     </>

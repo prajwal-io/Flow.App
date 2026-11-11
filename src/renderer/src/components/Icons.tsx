@@ -154,3 +154,12 @@ export function GripIcon({ size = 12 }: IconProps) {
     </svg>
   )
 }
+
+/** Three uneven bars: the quiet shorthand for the weekly report. */
+export function ReportIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...base(size)} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <path d="M3.6 12.4V9.4M8 12.4V4.4M12.4 12.4V7.2" />
+    </svg>
+  )
+}

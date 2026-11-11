@@ -2,10 +2,11 @@ interface SwitchProps {
   checked: boolean
   onChange: () => void
   label: string
+  disabled?: boolean
 }
 
 /** Small native-style toggle: a 30×18 track with a warm-clay on state. */
-export function Switch({ checked, onChange, label }: SwitchProps) {
+export function Switch({ checked, onChange, label, disabled = false }: SwitchProps) {
   return (
     <button
       type="button"
@@ -15,6 +16,7 @@ export function Switch({ checked, onChange, label }: SwitchProps) {
       title={label}
       className={`switch${checked ? ' is-on' : ''}`}
       onClick={onChange}
+      disabled={disabled}
     >
       <span className="switch-knob" />
     </button>

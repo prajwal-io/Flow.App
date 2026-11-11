@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { SettingsPatch, ThemePreference } from '../../shared/types'
+import type { ChimeKind, SettingsPatch, ThemePreference } from '../../shared/types'
 import { api } from './lib/api'
+import { setAmbience } from './lib/ambience'
 import { runCaptureScenarios } from './lib/capture'
 import { formatClock } from './lib/format'
 import { playChime } from './lib/sound'
 import { useRemainingMs, useTheme } from './lib/hooks'
+import type { PanelView } from './lib/view'
 import { useAppState } from './state'
 import { TitleBar } from './components/TitleBar'
 import { TimerFace } from './components/TimerFace'
@@ -14,21 +16,32 @@ import { ExpandedPanel } from './components/ExpandedPanel'
 export default function App() {
   const state = useAppState()
   const remaining = useRemainingMs(state?.timer)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [view, setView] = useState<PanelView>('work')
 
   useTheme(state?.settings.theme ?? 'system')
 
-  // Latest settings for the phase-end handler without re-subscribing.
+  // Latest sound prefs for the phase-end handler without re-subscribing.
   const soundRef = useRef(true)
+  const chimeRef = useRef<ChimeKind>('bell')
   useEffect(() => {
     soundRef.current = state?.settings.soundEnabled ?? true
-  }, [state?.settings.soundEnabled])
+    chimeRef.current = state?.settings.chime ?? 'bell'
+  }, [state?.settings.soundEnabled, state?.settings.chime])
 
   useEffect(() => {
     return api.onPhaseEnd((kind) => {
-      if (soundRef.current) playChime(kind)
+      if (soundRef.current) playChime(kind, chimeRef.current)
     })
   }, [])
+
+  // Ambience is the sound of honest focus: running focus only — never breaks,
+  // pauses, or away time.
+  const ambience = state?.settings.ambience ?? 'off'
+  const focusing = state?.timer.phase === 'focus' && state?.timer.status === 'running'
+  useEffect(() => {
+    setAmbience(focusing ? ambience : 'off')
+    return () => setAmbience('off')
+  }, [focusing, ambience])
 
   // Dev-only capture scenarios: launched with FLOW_SHOT=<name[,name...]>.
   useEffect(() => {
@@ -40,7 +53,7 @@ export default function App() {
   const expanded = state?.windowMode === 'expanded'
 
   useEffect(() => {
-    if (!expanded) setSettingsOpen(false)
+    if (!expanded) setView('work')
   }, [expanded])
 
   useEffect(() => {
@@ -64,13 +77,13 @@ export default function App() {
         api.command({ type: 'reset' })
       } else if (e.key === 'Escape') {
         e.preventDefault()
-        if (settingsOpen) setSettingsOpen(false)
+        if (view !== 'work') setView('work')
         else api.command(expanded ? { type: 'set-expanded', expanded: false } : { type: 'hide-window' })
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [expanded, settingsOpen])
+  }, [expanded, view])
 
   if (!state) return <div className="app app--boot" />
 
@@ -94,9 +107,9 @@ export default function App() {
         settings={settings}
         timer={timer}
         mode={state.windowMode}
-        settingsOpen={settingsOpen}
+        view={view}
+        onViewChange={setView}
         onToggleAlwaysOnTop={() => api.command({ type: 'set-always-on-top', on: !settings.alwaysOnTop })}
-        onToggleSettings={() => setSettingsOpen((open) => !open)}
         onToggleExpand={toggleExpand}
         onToggleExpandByDoubleClick={toggleExpand}
         onHide={() => api.command({ type: 'hide-window' })}
@@ -116,7 +129,8 @@ export default function App() {
       {expanded ? (
         <ExpandedPanel
           state={state}
-          settingsOpen={settingsOpen}
+          view={view}
+          onViewChange={setView}
           onSettingsChange={updateSettings}
           onThemeChange={(theme: ThemePreference) => updateSettings({ theme })}
         />

@@ -30,8 +30,29 @@ credits a focus you were not there for.
   and focus history persist locally; an interrupted session restores exactly on relaunch
 - **Local backup** — export a readable JSON file or restore one from **Settings → Data**;
   files stay on your machine and the current window position is kept on import
+- **Daily streaks, honestly kept** — a day counts when focus was actually logged; when the
+  run breaks, one missed day a week can be healed with a mark that never invents focus time
+- **Weekly report** — the last seven days of focused vs planned, best day, longest flow,
+  days focused, and streak, computed locally behind the bar-chart icon
+- **Sound identity** — four chime voices (bell / wood / glass / pad) with live preview, and
+  synthesized ambience (rain, brown noise, café) that plays only while a focus is running
+- **Distraction blocking (Windows)** — listed sites go unreachable in every browser during a
+  running focus, behind one-time permission; breaks and pauses stay open on purpose
+- **Share focus status** — one honest line to the clipboard, e.g.
+  `Focusing until 4:32 PM · Flow 2 of 4`
 - **Native notifications** plus an optional soft synthesized chime when a phase ends
 - **Light and dark** appearances (follow system, or set manually), one warm-clay accent
+
+## What's new in 1.3.0
+
+- Daily streaks with one heal per week: the healed day gets a ring mark, `focus` stays 0.
+- Weekly report: focused vs planned twin bars, best day, longest flow, days focused, streak.
+- Chime choices (bell / wood / glass / pad) with live preview, plus locally synthesized
+  focus ambience (rain, brown noise, café) that only plays during running focus.
+- Honest site blocking on Windows: a hosts-file block region that exists only while a focus
+  is actually running, enabled after a single explained permission prompt.
+- Presence: copy a one-line status; long flows (45+ min) get a quiet acknowledgment; the
+  session-complete notification carries the streak; the streak pulses when it grows.
 
 ## What's new in 1.2.0
 
@@ -75,11 +96,11 @@ main/preload changes restart Electron automatically.
 
 ## Install (Windows)
 
-A per-user installer is built at `dist/Flow-Setup-1.2.0.exe`. Run it directly, or
+A per-user installer is built at `dist/Flow-Setup-1.3.0.exe`. Run it directly, or
 install it silently from a terminal:
 
 ```powershell
-.\dist\Flow-Setup-1.2.0.exe /S
+.\dist\Flow-Setup-1.3.0.exe /S
 ```
 
 It installs to `%LOCALAPPDATA%\Programs\Flow` and adds a **Flow** Start-menu
@@ -91,8 +112,8 @@ Flow uses [electron-builder](https://www.electron-builder.org/) with the config 
 `electron-builder.yml`:
 
 ```bash
-npm run dist:win   # on Windows → dist/Flow-Setup-1.2.0.exe
-npm run dist:mac   # on macOS  → dist/Flow-1.2.0.dmg
+npm run dist:win   # on Windows → dist/Flow-Setup-1.3.0.exe
+npm run dist:mac   # on macOS  → dist/Flow-1.3.0.dmg
 ```
 
 Icons for all three platforms are generated from source by `scripts/gen-icons.mjs`
@@ -105,7 +126,7 @@ Icons for all three platforms are generated from source by `scripts/gen-icons.mj
 | `Space`                    | Start / pause                                      |
 | `S`                        | Skip to the next phase                             |
 | `R`                        | Reset the session                                  |
-| `Escape`                   | Close settings, collapse the panel, or hide to tray |
+| `Escape`                   | Close the current view, collapse the panel, or hide to tray |
 | `Alt+↑ / Alt+↓`            | Reorder the focused task (when its grip has focus) |
 | `Ctrl+Alt+Space` (global)  | Start / pause from anywhere (Windows/Linux)        |
 | `Cmd+Option+Space` (global)| Start / pause from anywhere (macOS)                |
@@ -134,19 +155,23 @@ src/
   shared/types.ts      Single source of truth for state & IPC contracts
   shared/date.ts       Local day keys and the seven-day strip
   shared/constants.ts  Away-pause threshold and idle poll interval
+  shared/streak.ts     Streak rules and the once-a-week repair
+  shared/blocking.ts   Pure hosts-file block region logic
+  shared/presence.ts   One-line status composer
   main/                Electron main process
     timer.ts           Phase state machine (timestamp-driven, sleep-proof, honest away pause)
     state.ts           Debounced atomic JSON persistence, validation, backup import
+    blocking.ts        Windows hosts sync + one-time permission grant
     window.ts          Frameless window, position memory, edge snapping, resize animation
     geometry.ts        Pure clamp / snap math for window placement
     tray.ts            Tray/menu-bar icon, menu, tooltip countdown
     index.ts           IPC commands, notifications, login item, hotkey, power/idle events
   preload/index.ts     contextBridge API (sandboxed, context-isolated)
   renderer/src/
-    App.tsx            Mode switching, settings view, shortcuts, phase-end chime
+    App.tsx            Panel views (plan / settings / report), shortcuts, chime, ambience
     state.ts           useSyncExternalStore mirror of main-process state
-    components/        TitleBar, Beads, TimerFace, Transport, Session/Tasks/Settings UI
-    lib/               countdown hook, formatting, WebAudio chime, capture harness
+    components/        TitleBar, Beads, TimerFace, Transport, Report/Block sections, settings UI
+    lib/               countdown hook, formatting, WebAudio chime + ambience, capture harness
     styles.css         Design tokens (light + dark) and every style
 ```
 

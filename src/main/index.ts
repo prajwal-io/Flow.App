@@ -1,11 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, powerMonitor, Menu, globalShortcut } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, powerMonitor, Menu, globalShortcut } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AppState, Command, PersistedState, PhaseEndKind } from '../shared/types'
 import { IDLE_PAUSE_SECONDS, IDLE_POLL_MS } from '../shared/constants'
 import { dayKey } from '../shared/date'
+import { canRepairDay, streakInfo } from '../shared/streak'
+import { presenceLine } from '../shared/presence'
 import { Store, cryptoRandomId, normalizeState } from './state'
 import { TimerEngine } from './timer'
+import { enableBlocking, releaseBlocklist, syncBlocklist } from './blocking'
 import {
   createFlowWindow,
   getFlowWindow,
@@ -68,6 +71,7 @@ function snapshot(): AppState {
     tasks: s.tasks,
     timer: s.timer,
     history: s.history,
+    lastRepairAt: s.lastRepairAt,
     activeTaskId: activeTaskId(),
     windowMode: getMode(),
     shortcutActive,
@@ -80,6 +84,8 @@ function broadcast(): void {
     if (!w.isDestroyed()) w.webContents.send('flow:state', state)
   }
   refreshTrayMenu()
+  // The block region follows the timer: present only during a running focus.
+  syncBlocklist(state)
 }
 
 /* -------------------------------------------------------------- boot hooks */
@@ -137,17 +143,36 @@ function engineTick(): void {
 
 /* ------------------------------------------------------------ notifications */
 
+/** A focus of this length deserves a quiet word, not just the usual count. */
+const LONG_FOCUS_MS = 45 * 60_000
+
 function notifyPhase(kind: PhaseEndKind): void {
   const state = snapshot()
   const breakLength =
     state.timer.breakKind === 'long' ? state.settings.longBreakMinutes : state.settings.breakMinutes
   const longBreak = state.timer.breakKind === 'long'
+
+  // A session ends with the streak it actually stands on — mentioned only
+  // when the run is worth mentioning (2+ days).
+  const streak = streakInfo(state.history, dayKey(), state.lastRepairAt)
+  const streakTail = streak.alive && streak.count >= 2 ? ` ${streak.count} day streak.` : ' Nicely done.'
+
+  // The engine remembered the credited focus; by now the timer itself has
+  // moved on to the break.
+  const focusMinutes = Math.round(engine.lastFocusMs / 60_000)
+  const focusBody =
+    engine.lastFocusMs >= LONG_FOCUS_MS
+      ? `${focusMinutes} minutes of real focus — Flow ${state.timer.completedFlows} of ${state.settings.flows} done, take a ${breakLength} min ${
+          longBreak ? 'long break' : 'break'
+        }.`
+      : `Flow ${state.timer.completedFlows} of ${state.settings.flows} done — take a ${breakLength} min ${
+          longBreak ? 'long break' : 'break'
+        }.`
+
   const copy: Record<PhaseEndKind, { title: string; body: string }> = {
     focus: {
       title: 'Focus complete',
-      body: `Flow ${state.timer.completedFlows} of ${state.settings.flows} done — take a ${breakLength} min ${
-        longBreak ? 'long break' : 'break'
-      }.`,
+      body: focusBody,
     },
     break: {
       title: 'Break over',
@@ -155,7 +180,7 @@ function notifyPhase(kind: PhaseEndKind): void {
     },
     session: {
       title: 'Session complete',
-      body: `All ${state.settings.flows} flows finished. Nicely done.`,
+      body: `All ${state.settings.flows} flows finished.${streakTail}`,
     },
   }
 
@@ -332,8 +357,22 @@ function handleCommand(cmd: Command): void {
       })
       break
     case 'update-settings': {
-      const prevLaunchAtLogin = store.get().settings.launchAtLogin
-      const prevShortcutEnabled = store.get().settings.globalShortcutEnabled
+      const current = store.get()
+      const prevLaunchAtLogin = current.settings.launchAtLogin
+      const prevShortcutEnabled = current.settings.globalShortcutEnabled
+      const wantsBlockOn = cmd.patch.blockDuringFocus === true && !current.settings.blockDuringFocus
+
+      if (wantsBlockOn) {
+        // Permission first; the setting only lands after Windows agrees.
+        void (async () => {
+          const granted = await enableBlocking()
+          if (granted) engine.applySettings(cmd.patch)
+          else notify('Site blocking stays off', 'Windows permission was not granted — you can try again any time.')
+          broadcast()
+        })()
+        return
+      }
+
       engine.applySettings(cmd.patch)
       if (cmd.patch.launchAtLogin !== undefined && cmd.patch.launchAtLogin !== prevLaunchAtLogin) syncLoginItem()
       if (cmd.patch.globalShortcutEnabled !== undefined && cmd.patch.globalShortcutEnabled !== prevShortcutEnabled) {
@@ -350,6 +389,29 @@ function handleCommand(cmd: Command): void {
     case 'set-expanded':
       setExpanded(cmd.expanded, windowDeps)
       break
+    case 'repair-day': {
+      // Re-validate against live state: the offered day, closed, one heal a week.
+      const today = dayKey()
+      const current = store.get()
+      if (!canRepairDay(current.history, cmd.key, today, current.lastRepairAt)) break
+      store.mutate((s) => {
+        const existing = s.history[cmd.key]
+        // A repair marks the day; focus time is never invented.
+        s.history[cmd.key] = existing
+          ? { ...existing, repaired: true }
+          : { focusMs: 0, flows: 0, plannedMs: 0, longestFlowMs: 0, blockedMs: 0, repaired: true }
+        s.lastRepairAt = today
+      })
+      break
+    }
+    case 'copy-presence': {
+      // Composed from live state: an honest line, never a promised one.
+      const s = store.get()
+      clipboard.writeText(presenceLine(s, s.history[dayKey()]?.focusMs ?? 0))
+      const win = getFlowWindow()
+      if (win && !win.isDestroyed()) win.webContents.send('flow:presence-copied')
+      break
+    }
     case 'export-data':
       void exportData()
       return
@@ -474,6 +536,7 @@ app.on('before-quit', () => {
   saveWindowPositionNow()
   engineTick()
   store.flush()
+  releaseBlocklist() // no focus will be running after this point
   globalShortcut.unregisterAll()
   destroyTray()
 })

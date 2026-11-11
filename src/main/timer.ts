@@ -1,4 +1,6 @@
 import type { BreakKind, PauseReason, PersistedState, PhaseEndKind, SettingsPatch } from '../shared/types'
+import { CHIME_KINDS, AMBIENCE_KINDS } from '../shared/types'
+import { parseSites } from '../shared/blocking'
 import { IDLE_PAUSE_SECONDS } from '../shared/constants'
 import { dayKey } from '../shared/date'
 
@@ -22,6 +24,9 @@ export class TimerEngine {
   onTransition: (() => void) | null = null
   /** Fired once per completed focus, break, or whole session. */
   onPhaseEnd: ((kind: PhaseEndKind) => void) | null = null
+
+  /** Duration of the most recently *credited* focus (0 before the first). */
+  lastFocusMs = 0
 
   constructor(private store: StoreLike) {}
 
@@ -185,7 +190,11 @@ export class TimerEngine {
       if (patch.autoStartBreaks !== undefined) s.settings.autoStartBreaks = Boolean(patch.autoStartBreaks)
       if (patch.autoStartFocus !== undefined) s.settings.autoStartFocus = Boolean(patch.autoStartFocus)
       if (patch.pauseWhenIdle !== undefined) s.settings.pauseWhenIdle = Boolean(patch.pauseWhenIdle)
+      if (patch.blockDuringFocus !== undefined) s.settings.blockDuringFocus = Boolean(patch.blockDuringFocus)
+      if (patch.blockedSites !== undefined) s.settings.blockedSites = parseSites(patch.blockedSites)
       if (patch.soundEnabled !== undefined) s.settings.soundEnabled = Boolean(patch.soundEnabled)
+      if (patch.chime !== undefined && CHIME_KINDS.includes(patch.chime)) s.settings.chime = patch.chime
+      if (patch.ambience !== undefined && AMBIENCE_KINDS.includes(patch.ambience)) s.settings.ambience = patch.ambience
       if (patch.theme !== undefined) s.settings.theme = patch.theme
       if (patch.launchAtLogin !== undefined) s.settings.launchAtLogin = Boolean(patch.launchAtLogin)
       if (patch.pauseOnLock !== undefined) s.settings.pauseOnLock = Boolean(patch.pauseOnLock)
@@ -323,7 +332,7 @@ export class TimerEngine {
     const key = dayKey()
     const existing = s.history[key]
     if (existing) return existing
-    const created = { focusMs: 0, flows: 0, plannedMs: 0 }
+    const created = { focusMs: 0, flows: 0, plannedMs: 0, longestFlowMs: 0, blockedMs: 0, repaired: false }
     s.history[key] = created
     return created
   }
@@ -331,8 +340,15 @@ export class TimerEngine {
   private creditFocus(s: PersistedState): void {
     const stat = this.statFor(s)
     // Credit the phase that actually ran, not a duration changed mid-phase.
-    stat.focusMs += s.timer.phaseDurationMs > 0 ? s.timer.phaseDurationMs : this.focusMs(s)
+    const credited = s.timer.phaseDurationMs > 0 ? s.timer.phaseDurationMs : this.focusMs(s)
+    stat.focusMs += credited
+    stat.longestFlowMs = Math.max(stat.longestFlowMs, credited)
     stat.flows += 1
+    // Honest block stat: only counts when a real blocklist was in play.
+    if (s.settings.blockDuringFocus && s.settings.blockedSites.length > 0) stat.blockedMs += credited
+    // Remembered for the phase-end notification: at that point the timer has
+    // already moved on and `phaseDurationMs` belongs to the break.
+    this.lastFocusMs = credited
     this.pruneHistory(s)
   }
 

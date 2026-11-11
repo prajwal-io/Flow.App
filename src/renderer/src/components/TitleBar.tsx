@@ -1,15 +1,16 @@
 import type { Settings, TimerState, WindowMode } from '../../../shared/types'
+import type { PanelView } from '../lib/view'
 import { IconButton } from './IconButton'
 import { Beads } from './Beads'
-import { ChevronDownIcon, ChevronUpIcon, CloseIcon, PinIcon, SettingsIcon } from './Icons'
+import { ChevronDownIcon, ChevronUpIcon, CloseIcon, PinIcon, ReportIcon, SettingsIcon } from './Icons'
 
 interface TitleBarProps {
   settings: Settings
   timer: TimerState
   mode: WindowMode
-  settingsOpen: boolean
+  view: PanelView
+  onViewChange: (view: PanelView) => void
   onToggleAlwaysOnTop: () => void
-  onToggleSettings: () => void
   onToggleExpand: () => void
   onHide: () => void
   onToggleExpandByDoubleClick: () => void
@@ -19,9 +20,9 @@ export function TitleBar({
   settings,
   timer,
   mode,
-  settingsOpen,
+  view,
+  onViewChange,
   onToggleAlwaysOnTop,
-  onToggleSettings,
   onToggleExpand,
   onHide,
   onToggleExpandByDoubleClick,
@@ -47,13 +48,22 @@ export function TitleBar({
           <PinIcon />
         </IconButton>
         {mode === 'expanded' && (
-          <IconButton
-            label={settingsOpen ? 'Close settings' : 'Settings'}
-            active={settingsOpen}
-            onClick={onToggleSettings}
-          >
-            <SettingsIcon />
-          </IconButton>
+          <>
+            <IconButton
+              label={view === 'report' ? 'Close report' : 'Weekly report'}
+              active={view === 'report'}
+              onClick={() => onViewChange(view === 'report' ? 'work' : 'report')}
+            >
+              <ReportIcon />
+            </IconButton>
+            <IconButton
+              label={view === 'settings' ? 'Close settings' : 'Settings'}
+              active={view === 'settings'}
+              onClick={() => onViewChange(view === 'settings' ? 'work' : 'settings')}
+            >
+              <SettingsIcon />
+            </IconButton>
+          </>
         )}
         <IconButton label={mode === 'compact' ? 'Expand' : 'Collapse'} onClick={onToggleExpand}>
           {mode === 'compact' ? <ChevronUpIcon /> : <ChevronDownIcon />}
